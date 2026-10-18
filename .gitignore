@@ -1,0 +1,18 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Generated trained models
+*.joblib
+*.pkl
+
+# Editor and operating system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
