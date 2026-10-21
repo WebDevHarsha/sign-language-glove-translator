@@ -1,5 +1,3 @@
-"""Read 30 Hz glove sensor data from the ESP32 and translate it live."""
-
 from __future__ import annotations
 
 import argparse
