@@ -1,5 +1,3 @@
-"""Translate glove sensor readings from an Excel workbook into text."""
-
 from __future__ import annotations
 
 import argparse
@@ -15,7 +13,7 @@ from sign_language_model import MODEL_PATH, SENSOR_COLUMNS, _features
 
 MIN_STABLE_WINDOWS = 3
 STRONG_CONFIDENCE = 0.55
-NON_LANGUAGE_SIGNS = {"CAL_BENT", "CAL_FLAT", "QQ"}
+NON_LANGUAGE_SIGNS = {"CAL_BENT", "CAL_FLAT"}
 SPELLING_WORDS = {
     "a", "about", "after", "again", "all", "am", "an", "and", "any", "are",
     "as", "at", "be", "because", "been", "before", "being", "best", "better",
@@ -100,6 +98,8 @@ def _format_sentence(labels: list[str]) -> str:
             letters = ""
 
     for label in labels:
+        if label == "QQ":
+            label = "Q"
         if len(label) == 1 and label.isalpha():
             letters += label
         else:
