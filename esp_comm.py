@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
+import queue
+import subprocess
+import sys
+import threading
 import time
 from collections import Counter, deque
 from pathlib import Path
@@ -21,6 +26,7 @@ SAMPLE_RATE_HZ = 30
 DEFAULT_WINDOW_SIZE = 128
 DEFAULT_STRIDE = 32
 PREDICTION_HISTORY = 3
+SPEECH_QUIET_SECONDS = 1.5
 
 
 def _parse_sensor_sample(line: str) -> np.ndarray:
@@ -45,6 +51,85 @@ def _parse_sensor_sample(line: str) -> np.ndarray:
     if not np.isfinite(sample).all():
         raise ValueError("sensor fields must contain finite numeric values")
     return sample
+
+
+def _speech_suffix(sentence: str, previous_sentence: str) -> str:
+    """Return only newly added words when the translation extends previous text."""
+    current_words = sentence.rstrip(".!?").split()
+    previous_words = previous_sentence.rstrip(".!?").split()
+    if current_words[: len(previous_words)] == previous_words:
+        current_words = current_words[len(previous_words) :]
+    return " ".join(current_words)
+
+
+class SpeechOutput:
+    """Speak settled translation updates asynchronously using Windows SAPI."""
+
+    def __init__(self) -> None:
+        self._updates: queue.Queue[str | None] = queue.Queue(maxsize=1)
+        self._worker = threading.Thread(target=self._run, daemon=True)
+        self._worker.start()
+
+    def update(self, sentence: str) -> None:
+        """Queue the latest translation, replacing an update not yet spoken."""
+        try:
+            self._updates.put_nowait(sentence)
+        except queue.Full:
+            try:
+                self._updates.get_nowait()
+            except queue.Empty:
+                pass
+            self._updates.put_nowait(sentence)
+
+    def _run(self) -> None:
+        previous_sentence = ""
+        while True:
+            sentence = self._updates.get()
+            if sentence is None:
+                return
+
+            while True:
+                try:
+                    newer_sentence = self._updates.get(timeout=SPEECH_QUIET_SECONDS)
+                except queue.Empty:
+                    break
+                if newer_sentence is None:
+                    return
+                sentence = newer_sentence
+
+            text = _speech_suffix(sentence, previous_sentence)
+            if not text:
+                continue
+
+            script = (
+                "$voice = New-Object -ComObject SAPI.SpVoice; "
+                f"$text = [Text.Encoding]::UTF8.GetString("
+                f"[Convert]::FromBase64String('{base64.b64encode(text.encode('utf-8')).decode('ascii')}')); "
+                "[void]$voice.Speak($text)"
+            )
+            encoded_script = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+            try:
+                subprocess.run(
+                    [
+                        "powershell.exe",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-EncodedCommand",
+                        encoded_script,
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=30,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except (OSError, subprocess.SubprocessError) as error:
+                print(f"Text-to-speech error: {error}", file=sys.stderr)
+                continue
+
+            previous_sentence = sentence
 
 
 def main() -> None:
@@ -80,6 +165,11 @@ def main() -> None:
         default=0.0,
         help="Ignore predictions below this confidence (0 to 1).",
     )
+    parser.add_argument(
+        "--no-speech",
+        action="store_true",
+        help="Disable Windows text-to-speech.",
+    )
     args = parser.parse_args()
 
     if args.window_size < 1:
@@ -90,6 +180,8 @@ def main() -> None:
         parser.error("--min-confidence must be between 0 and 1")
     if not args.model.is_file():
         parser.error(f"trained model not found: {args.model}; train it first")
+    if not args.no_speech and sys.platform != "win32":
+        parser.error("Text-to-speech uses Windows SAPI; use --no-speech on other platforms.")
 
     bundle: dict[str, Any] = joblib.load(args.model)
     classifier = bundle["classifier"]
@@ -97,6 +189,7 @@ def main() -> None:
     prediction_history: deque[str] = deque(maxlen=PREDICTION_HISTORY)
     translated_labels: list[str] = []
     new_samples_since_prediction = 0
+    speech = None if args.no_speech else SpeechOutput()
 
     print(f"Connecting to ESP32 on {args.port} at {args.baud_rate} baud...")
     try:
@@ -153,6 +246,8 @@ def main() -> None:
                     f"Prediction: {label} ({confidence:.1%}) | "
                     f"Translation: {sentence}"
                 )
+                if speech is not None:
+                    speech.update(sentence)
 
     except serial.SerialException as error:
         print(f"Serial connection error: {error}")
