@@ -29,8 +29,11 @@ The model is trained with 300 trees, balanced-sub-sample class weights, and a fi
 ## Repository contents
 
 - `sign_language_model.py` — feature extraction, model training, and single-recording prediction.
+- `extra_trees_sign_language_model.py` — Extra Trees training and single-recording prediction for `Datasets/sign_data/`.
+- `test_extra_trees_sign_language_model.py` — held-out evaluation for the Extra Trees classifier.
 - `excel_sign_translator.py` — overlapping-window Excel classification and sentence formatting.
 - `esp_comm.py` — live serial input and streaming predictions from an ESP32.
+- `esp_extra_trees_comm.py` — live ESP32 translation using the Extra Trees model.
 - `test_sign_language_model.py` — held-out recording evaluation.
 - `labels.json` — allowed class directory names for training and evaluation.
 - `Datasets/data/` — training recordings, arranged in one directory per sign.
@@ -63,6 +66,22 @@ To specify another dataset or output path:
 python sign_language_model.py train --data .\Datasets\data --output .\sign_language_model.joblib
 ```
 
+## Train the Extra Trees model
+
+The Extra Trees script defaults to `Datasets/sign_data` and saves a separate
+`extra_trees_sign_language_model.joblib` model. It uses Gini impurity, random
+feature thresholds, the full training set for each tree (no bootstrap), and
+square-root feature sampling. It uses 300 trees, matching the existing model's
+tree count; the report excerpt does not specify a tree count.
+
+```powershell
+python extra_trees_sign_language_model.py train
+python extra_trees_sign_language_model.py predict .\Datasets\sign_data\A\A_rep02_20261026_124442.csv
+```
+
+All class subdirectories in `Datasets/sign_data` are used as labels; this avoids
+omitting dataset folders that are not listed in `labels.json`.
+
 Expected dataset layout:
 
 ```text
@@ -93,6 +112,18 @@ python test_sign_language_model.py --data .\Datasets\data --test-fraction 0.2
 ```
 
 The script reports accuracy and a per-class precision/recall/F1 report. This is a recording-level random split; it should not be interpreted as a signer-independent or real-world performance guarantee.
+
+Evaluate the Extra Trees model with the same held-out split approach:
+
+```powershell
+python test_extra_trees_sign_language_model.py
+```
+
+Set the holdout fraction or dataset directory:
+
+```powershell
+python test_extra_trees_sign_language_model.py --data .\Datasets\sign_data --test-fraction 0.2
+```
 
 ## Use a sensor CSV recording
 
@@ -147,6 +178,16 @@ python esp_comm.py --help
 ```
 
 Press **Ctrl+C** to stop.
+
+To use the Extra Trees model instead, run:
+
+```powershell
+python esp_extra_trees_comm.py --port COM8 --baud-rate 115200
+```
+
+This script uses the Extra Trees model by default and supports the same window,
+stride, confidence, and speech options as `esp_comm.py`. Add `--no-speech` to
+disable Windows text-to-speech.
 
 ## Limitations
 
