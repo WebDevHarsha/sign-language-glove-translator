@@ -1,5 +1,3 @@
-"""Translate live ESP32 glove readings with the Extra Trees classifier."""
-
 from __future__ import annotations
 
 import argparse
